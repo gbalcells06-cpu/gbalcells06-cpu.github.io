@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.gbalcells06.atlastest",
+        "sha256_cert_fingerprints": ["E6:00:7C:58:12:08:01:12:0E:6F:A3:71:AB:F0:C8:27:45:9F:98:44:5A:04:99:63:2F:62:F2:78:B3:34:80:09"]
+      }
+    }]
