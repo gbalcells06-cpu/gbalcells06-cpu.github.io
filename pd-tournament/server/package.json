@@ -1,0 +1,25 @@
+{
+  "name": "pd-tournament-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Servidor en tiempo real para el torneo del Dilema del Prisionero",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "smoke-test": "node scripts/smoke-test.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "nanoid": "^5.0.7",
+    "socket.io": "^4.7.5"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}
