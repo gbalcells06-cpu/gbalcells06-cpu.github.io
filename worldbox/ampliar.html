@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ampliar mapa WorldBox</title>
+<style>
+  :root { --bg:#f6f7f9; --fg:#1d2330; --muted:#5b6475; --card:#fff; --line:#d9dde5; --accent:#2f6fd6; --ok:#1d7a3a; --err:#b42318; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171d; --fg:#e7eaf0; --muted:#9aa3b2; --card:#1d222b; --line:#2f3642; --accent:#6ea0f5; --ok:#5cc47e; --err:#f0857b; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  p.lead { color:var(--muted); margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  label { display:block; font-weight:600; margin-bottom:6px; }
+  input[type=number] { width:90px; padding:6px; font:inherit; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; }
+  .row { display:flex; gap:16px; flex-wrap:wrap; align-items:end; }
+  button { font:inherit; font-weight:600; padding:10px 18px; border:0; border-radius:8px; background:var(--accent); color:#fff; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  #log { white-space:pre-wrap; font:13px/1.45 ui-monospace, monospace; color:var(--muted); }
+  .ok { color:var(--ok); } .err { color:var(--err); }
+  canvas { max-width:100%; image-rendering:pixelated; border:1px solid var(--line); border-radius:6px; margin-top:12px; display:none; }
+  code { font-size:.9em; }
+  ol { padding-left:20px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Ampliar mapa de WorldBox</h1>
+  <p class="lead">Agranda los límites de un mapa guardado (<code>map.wbox</code>) rellenando el espacio nuevo con océano profundo. Unidades, ciudades, reinos e historia se conservan tal cual. Todo se hace en tu navegador: el archivo no se sube a ningún sitio.</p>
+
+  <div class="card">
+    <label for="file">1. Elige el <code>map.wbox</code> de tu ranura</label>
+    <input id="file" type="file" accept=".wbox,.wbax,.json">
+    <p id="info" style="margin:10px 0 0;color:var(--muted)"></p>
+  </div>
+
+  <div class="card">
+    <label>2. Tamaño nuevo (en bloques de 64 casillas)</label>
+    <div class="row">
+      <div>Ancho<br><input id="w" type="number" min="1" max="64" disabled></div>
+      <div>Alto<br><input id="h" type="number" min="1" max="64" disabled></div>
+      <button id="go" disabled>Ampliar y descargar</button>
+    </div>
+    <p style="margin:10px 0 0;color:var(--muted);font-size:.9rem">Por defecto se multiplica el tamaño actual por ≈2,45 (la proporción de tu imagen: el mundo ocupa 440 de 1080 px). Ojo: cada bloque más son 4096 casillas más; mapas muy grandes cargan lento.</p>
+    <p style="margin:6px 0 0;color:var(--muted);font-size:.9rem">Tu mundo queda en la esquina <b>inferior</b> izquierda: así ninguna unidad, edificio ni ciudad cambia de coordenadas, que es lo que garantiza que el guardado siga intacto.</p>
+    <canvas id="preview"></canvas>
+  </div>
+
+  <div class="card">
+    <div id="log">Esperando archivo…</div>
+  </div>
+
+  <div class="card">
+    <strong>Cómo instalarlo</strong>
+    <ol>
+      <li>Cierra WorldBox (o al menos sal al menú).</li>
+      <li>Ve a <code>%USERPROFILE%\AppData\LocalLow\mkarpenko\WorldBox\saves\save19\</code> (pégalo en la barra del Explorador de Windows).</li>
+      <li><b>Haz una copia de seguridad de toda la carpeta <code>save19</code></b> antes de tocar nada.</li>
+      <li>Sube aquí su <code>map.wbox</code>, pulsa «Ampliar y descargar» y sustituye el <code>map.wbox</code> de la carpeta por el descargado (mismo nombre).</li>
+      <li>Abre WorldBox y carga la ranura 19.</li>
+    </ol>
+  </div>
+</main>
+
+<script>
+"use strict";
+const CHUNK = 64;          // casillas por bloque de mapa
+const SCALE = 1080 / 440;  // proporción de la imagen de referencia
+const OCEAN = "deep_ocean";
+// Listas guardadas como índices de casilla (x + y*ancho): hay que recalcularlas al cambiar el ancho.
+const TILE_INDEX_LISTS = ["fire", "conwayEater", "conwayCreator"];
+
+const $ = (id) => document.getElementById(id);
+const log = (msg, cls) => {
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  $("log").appendChild(line);
+};
+
+let map = null, fileName = "map.wbox", wasCompressed = true;
+
+async function inflate(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+async function deflate(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function tileKey(m) { return "tileMap" in m ? "tileMap" : ("tilemap" in m ? "tilemap" : null); }
+
+$("file").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  $("log").textContent = "";
+  $("go").disabled = true;
+  fileName = f.name;
+  try {
+    const raw = new Uint8Array(await f.arrayBuffer());
+    let text;
+    // Los .wbox van comprimidos con zlib (empiezan por 0x78); los .wbax/.json son texto plano.
+    if (raw[0] === 0x78) { text = new TextDecoder().decode(await inflate(raw)); wasCompressed = true; }
+    else { text = new TextDecoder().decode(raw); wasCompressed = false; }
+    map = JSON.parse(text);
+
+    const tk = tileKey(map);
+    if (!tk || !Array.isArray(map.tileArray) || !Array.isArray(map.tileAmounts)) throw new Error("No encuentro tileMap/tileArray/tileAmounts: ¿es un map.wbox de WorldBox?");
+    const W = map.width * CHUNK, H = map.height * CHUNK;
+    if (map.tileArray.length !== H) throw new Error(`Esperaba ${H} filas de casillas y hay ${map.tileArray.length}. Formato no reconocido; no toco nada.`);
+    for (let y = 0; y < H; y++) {
+      const sum = map.tileAmounts[y].reduce((a, b) => a + b, 0);
+      if (sum !== W || map.tileAmounts[y].length !== map.tileArray[y].length) throw new Error(`La fila ${y} no mide ${W} casillas. Formato no reconocido; no toco nada.`);
+    }
+
+    $("info").textContent = `Versión de guardado ${map.saveVersion} · tamaño actual ${map.width}×${map.height} bloques (${W}×${H} casillas) · ${text.length.toLocaleString("es")} caracteres de datos.`;
+    $("w").value = Math.max(map.width, Math.round(map.width * SCALE));
+    $("h").value = Math.max(map.height, Math.round(map.height * SCALE));
+    $("w").min = map.width; $("h").min = map.height;
+    $("w").disabled = $("h").disabled = $("go").disabled = false;
+    log("Archivo leído y comprobado. Elige tamaño y pulsa «Ampliar y descargar».", "ok");
+    drawPreview(map);
+  } catch (err) {
+    map = null;
+    log("Error: " + err.message, "err");
+  }
+});
+
+function expand(m, newW, newH) {
+  const tk = tileKey(m);
+  const oldW = m.width * CHUNK, oldH = m.height * CHUNK;
+  const NW = newW * CHUNK, NH = newH * CHUNK;
+
+  let ocean = m[tk].indexOf(OCEAN);
+  if (ocean < 0) { m[tk].push(OCEAN); ocean = m[tk].length - 1; }
+
+  // El origen (0,0) de WorldBox es la esquina inferior izquierda y la fila 0 es la de abajo.
+  // Añadiendo océano a la derecha de cada fila y filas nuevas encima, ninguna casilla
+  // existente cambia de coordenadas, así que unidades, edificios y ciudades siguen en su sitio.
+  const extraX = NW - oldW;
+  if (extraX > 0) {
+    for (let y = 0; y < oldH; y++) {
+      const ids = m.tileArray[y], amts = m.tileAmounts[y];
+      if (ids[ids.length - 1] === ocean) amts[amts.length - 1] += extraX;
+      else { ids.push(ocean); amts.push(extraX); }
+    }
+  }
+  for (let y = oldH; y < NH; y++) { m.tileArray.push([ocean]); m.tileAmounts.push([NW]); }
+
+  for (const key of TILE_INDEX_LISTS) {
+    const list = m[key];
+    if (!Array.isArray(list) || !list.length || !list.every(Number.isInteger)) continue;
+    m[key] = list.map((i) => (i % oldW) + Math.floor(i / oldW) * NW);
+    log(`Recalculadas ${list.length} posiciones de «${key}».`);
+  }
+
+  m.width = newW;
+  m.height = newH;
+  return m;
+}
+
+$("go").addEventListener("click", async () => {
+  if (!map) return;
+  const newW = parseInt($("w").value, 10), newH = parseInt($("h").value, 10);
+  if (!(newW >= map.width && newH >= map.height)) { log("El tamaño nuevo no puede ser menor que el actual.", "err"); return; }
+  $("go").disabled = true;
+  try {
+    const oldW = map.width, oldH = map.height;
+    expand(map, newW, newH);
+    const json = new TextEncoder().encode(JSON.stringify(map));
+    const out = wasCompressed ? await deflate(json) : json;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([out], { type: "application/octet-stream" }));
+    a.download = fileName.endsWith(".wbax") ? "map.wbax" : "map.wbox";
+    a.click();
+    log(`Listo: ${oldW}×${oldH} → ${newW}×${newH} bloques (${newW * CHUNK}×${newH * CHUNK} casillas). Descargado «${a.download}».`, "ok");
+    drawPreview(map);
+    map = null; // evita ampliar dos veces el mismo objeto: vuelve a elegir el archivo si quieres repetir
+    $("w").disabled = $("h").disabled = true;
+  } catch (err) {
+    log("Error: " + err.message, "err");
+    $("go").disabled = false;
+  }
+});
+
+function colorFor(id) {
+  if (!id) return [0, 0, 0];
+  if (id.includes("deep_ocean")) return [52, 86, 140];
+  if (id.includes("ocean") || id.includes("water") || id.includes("lake")) return [74, 120, 190];
+  if (id.includes("mountain") || id.includes("hills") || id.includes("rocks")) return [90, 90, 90];
+  if (id.includes("sand")) return [214, 196, 140];
+  if (id.includes("lava")) return [220, 90, 30];
+  if (id.includes("snow")) return [235, 240, 245];
+  return [86, 132, 64];
+}
+
+function drawPreview(m) {
+  const tk = tileKey(m), W = m.width * CHUNK, H = m.height * CHUNK;
+  const step = Math.max(1, Math.ceil(Math.max(W, H) / 512));
+  const cw = Math.ceil(W / step), ch = Math.ceil(H / step);
+  const cv = $("preview"); cv.width = cw; cv.height = ch; cv.style.display = "block";
+  const ctx = cv.getContext("2d"), img = ctx.createImageData(cw, ch);
+  const colors = m[tk].map(colorFor);
+  for (let y = 0; y < H; y += step) {
+    const ids = m.tileArray[y], amts = m.tileAmounts[y];
+    const py = ch - 1 - Math.floor(y / step); // la fila 0 está abajo
+    let x = 0;
+    for (let r = 0; r < ids.length; r++) {
+      const c = colors[ids[r]] || [0, 0, 0];
+      const end = x + amts[r];
+      for (let xx = Math.ceil(x / step) * step; xx < end; xx += step) {
+        const o = (py * cw + xx / step) * 4;
+        img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+      }
+      x = end;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+</script>
+</body>
+</html>
