@@ -191,9 +191,16 @@
     <button type="button" class="segmented-btn" aria-pressed="false" data-mode="territoriesOnly" data-i18n="territory.territoriesOnly">Solo territorios</button>
   </div>
   <p id="study-progress-legend" class="subtitle hidden" data-i18n="study.legend">Verde = se te da bien · Amarillo = a medias · Rojo = se te da mal · Gris = sin datos todavía</p>
-  <div class="study-layout">
+  <!-- Solo en pantallas estrechas: elegir ver el mapa, la lista o las dos cosas -->
+  <div class="segmented study-view" id="study-view" role="group" aria-label="Vista">
+    <button type="button" class="segmented-btn" aria-pressed="false" data-view="map" data-i18n="study.viewMap">🗺️ Mapa</button>
+    <button type="button" class="segmented-btn active" aria-pressed="true" data-view="both" data-i18n="study.viewBoth">Ambos</button>
+    <button type="button" class="segmented-btn" aria-pressed="false" data-view="list" data-i18n="study.viewList">📋 Lista</button>
+  </div>
+  <div class="study-layout" data-view="both">
     <div class="map-wrapper study-map-wrapper">
       <svg id="study-map" viewBox="0 0 960 960" preserveAspectRatio="xMidYMid meet"></svg>
+      <div id="study-map-info" class="study-map-info hidden"></div>
     </div>
     <div class="study-list-wrapper">
       <input type="text" id="study-search" class="study-search" autocomplete="off" data-i18n-placeholder="study.searchPlaceholder" placeholder="Buscar país o capital...">

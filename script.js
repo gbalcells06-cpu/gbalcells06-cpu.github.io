@@ -1000,9 +1000,12 @@ function openStudy(continent) {
   );
   document.getElementById("study-progress-legend").classList.add("hidden");
   document.getElementById("study-search").value = "";
+  document.getElementById("study-map-info").classList.add("hidden");
+  studySelectedIso = null;
+  setStudyView("both");
+  showScreen("study"); // antes de dibujar: así se puede medir el hueco del mapa
   drawStudyMap();
   buildStudyList();
-  showScreen("study");
   if (window.mascot) window.mascot.setExpression("curious", 2000);
 }
 
@@ -1038,6 +1041,15 @@ function studyFillColor(iso) {
   return scoreToColor(getCountryScore(studyContinent.id, iso));
 }
 
+let studySelectedIso = null;
+
+function studyMapSize() {
+  if (window.innerWidth > 1040) return [960, 960];
+  const w = document.querySelector("#screen-study .study-map-wrapper");
+  const r = w && w.clientWidth && w.clientHeight ? w.clientHeight / w.clientWidth : 1;
+  return [960, Math.round(960 * Math.min(2, Math.max(0.5, r)))];
+}
+
 function drawStudyMap() {
   const svg = d3.select("#study-map");
   svg.selectAll("*").remove();
@@ -1049,7 +1061,11 @@ function drawStudyMap() {
   const mapFeatures =
     studyTerritoryMode === "sovereign" ? studyData.features.filter((f) => !f.properties.isTerritory) : studyData.features;
 
-  const projection = makeProjection(studyContinent.id).fitSize([960, 960], getFitData(studyContinent.id, { type: "FeatureCollection", features: mapFeatures }));
+  // En el móvil el hueco del mapa no es cuadrado (alto en «solo mapa», ancho en
+  // «ambos"): se ajusta el lienzo a su forma para que el continente lo llene.
+  const [W, H] = studyMapSize();
+  svg.attr("viewBox", `0 0 ${W} ${H}`);
+  const projection = makeProjection(studyContinent.id).fitSize([W, H], getFitData(studyContinent.id, { type: "FeatureCollection", features: mapFeatures }));
   const path = d3.geoPath().projection(projection);
   const layer = svg.append("g").attr("class", "zoom-layer");
   const isDimmed = (d) => studyTerritoryMode === "territoriesOnly" && !d.properties.isTerritory;
@@ -1126,6 +1142,10 @@ function buildStudyList() {
     `;
     li.addEventListener("click", (e) => {
       if (e.target.closest("a")) return; // no interferir con el enlace
+      // En la vista «solo lista» (móvil), tocar un país lleva al mapa para verlo
+      if (document.querySelector("#screen-study .study-layout").dataset.view === "list" && window.innerWidth <= 1040) {
+        setStudyView("map");
+      }
       highlightStudyEntry(iso);
     });
     list.appendChild(li);
@@ -1152,15 +1172,53 @@ function applyStudySearchFilter() {
 }
 
 function highlightStudyEntry(iso) {
+  studySelectedIso = iso;
   d3.selectAll("#study-map [data-iso]").classed("highlight", false);
   d3.selectAll(`#study-map [data-iso="${iso}"]`).classed("highlight", true);
   document.querySelectorAll(".study-list li").forEach((li) => li.classList.remove("highlight"));
   const row = document.getElementById(`study-row-${iso}`);
   if (row) {
     row.classList.add("highlight");
-    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (row.offsetParent) row.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  // Ficha flotante sobre el mapa (en el móvil): nombre y capital del país tocado
+  const info = document.getElementById("study-map-info");
+  const feature = studyData && studyData.features.find((f) => f.properties["ISO3166-1-Alpha-3"] === iso);
+  if (info && feature) {
+    info.innerHTML = "";
+    const c = document.createElement("span");
+    c.className = "country";
+    c.textContent = tCountryName(feature);
+    const k = document.createElement("span");
+    k.className = "capital";
+    k.textContent = tCapitalName(feature);
+    info.append(c, k);
+    info.classList.remove("hidden");
   }
 }
+
+// Móvil: ver el mapa, la lista o las dos cosas
+function setStudyView(view) {
+  const layout = document.querySelector("#screen-study .study-layout");
+  const cambia = layout.dataset.view !== view;
+  layout.dataset.view = view;
+  setActiveSegmentedBtn(
+    document.querySelectorAll("#study-view .segmented-btn"),
+    document.querySelector(`#study-view .segmented-btn[data-view="${view}"]`)
+  );
+  // El hueco del mapa cambia de forma: se redibuja para llenarlo
+  if (cambia && view !== "list" && studyData && document.getElementById("screen-study").classList.contains("active")) {
+    drawStudyMap();
+    if (studySelectedIso) d3.selectAll(`#study-map [data-iso="${studySelectedIso}"]`).classed("highlight", true);
+  }
+}
+document.getElementById("study-view").addEventListener("click", (e) => {
+  const btn = e.target.closest(".segmented-btn");
+  if (!btn) return;
+  setStudyView(btn.dataset.view);
+  const sel = document.querySelector("#study-list li.highlight");
+  if (sel && btn.dataset.view !== "map") sel.scrollIntoView({ block: "center" });
+});
 
 // Quita los territorios autónomos de un FeatureCollection salvo que se pida
 // incluirlos explícitamente (por defecto siempre se practica solo con países

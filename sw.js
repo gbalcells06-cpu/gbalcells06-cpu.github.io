@@ -9,7 +9,7 @@
 //   primero, para ahorrar datos y que carguen al instante; se renuevan solos
 //   si alguna vez cambiara el fichero, porque cada versión nueva del service
 //   worker borra las cachés de versiones anteriores.
-const CACHE_VERSION = "v6";
+const CACHE_VERSION = "v7";
 const CACHE_NAME = `atlas-test-${CACHE_VERSION}`;
 
 const PRECACHE_URLS = [
